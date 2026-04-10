@@ -1,0 +1,588 @@
+<!DOCTYPE HTML>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spirit Escape - Horror Game</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #000;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+        }
+        
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #game-canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #fff;
+            font-size: 16px;
+            text-shadow: 2px 2px 4px #000;
+            z-index: 100;
+        }
+        
+        #message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 24px;
+            text-align: center;
+            text-shadow: 2px 2px 8px #000;
+            z-index: 101;
+            display: none;
+        }
+        
+        #jumpscare-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 200;
+            display: none;
+        }
+        
+        #jumpscare-3d {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .inventory-item {
+            display: inline-block;
+            margin: 5px;
+            padding: 5px 10px;
+            background: #333;
+            border: 2px solid #666;
+            border-radius: 5px;
+        }
+        
+        #controls-hint {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: #aaa;
+            font-size: 14px;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+        <div id="ui">
+            <div>Inventory:</div>
+            <div id="inventory"></div>
+            <div id="location" style="margin-top: 10px;">Location: Cabin</div>
+        </div>
+        <div id="message"></div>
+        <div id="jumpscare-overlay">
+            <div id="jumpscare-3d"></div>
+        </div>
+        <div id="controls-hint">WASD / Arrow Keys to move | SPACE to interact</div>
+    </div>
+
+    <script>
+        // Game State
+        const gameState = {
+            scene: 'cabin', // cabin, path, city, metro, train, jumpscare, ending
+            player: { x: 400, y: 300, speed: 4, size: 20 },
+            keys: {},
+            inventory: [],
+            itemsCollected: { gun: false, helmet: false },
+            metroStarted: false,
+            jumpscareCount: 0,
+            gameOver: false
+        };
+
+        // Canvas Setup
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // UI Elements
+        const messageEl = document.getElementById('message');
+        const inventoryEl = document.getElementById('inventory');
+        const locationEl = document.getElementById('location');
+        const jumpscareOverlay = document.getElementById('jumpscare-overlay');
+
+        // Item positions
+        const items = {
+            gun: { x: 800, y: 400, collected: false },
+            helmet: { x: 1200, y: 350, collected: false }
+        };
+
+        // Keyboard Input
+        document.addEventListener('keydown', (e) => {
+            gameState.keys[e.key.toLowerCase()] = true;
+            if (e.code === 'Space') interact();
+        });
+
+        document.addEventListener('keyup', (e) => {
+            gameState.keys[e.key.toLowerCase()] = false;
+        });
+
+        // Show Message
+        function showMessage(text, duration = 2000) {
+            messageEl.textContent = text;
+            messageEl.style.display = 'block';
+            setTimeout(() => {
+                messageEl.style.display = 'none';
+            }, duration);
+        }
+
+        // Add to Inventory
+        function addToInventory(item) {
+            if (!gameState.inventory.includes(item)) {
+                gameState.inventory.push(item);
+                updateInventory();
+                showMessage(`+ ${item}`);
+            }
+        }
+
+        // Update Inventory Display
+        function updateInventory() {
+            inventoryEl.innerHTML = gameState.inventory
+                .map(item => `<span class="inventory-item">${item}</span>`)
+                .join('');
+        }
+
+        // Interact
+        function interact() {
+            if (gameState.scene === 'metro' && !gameState.metroStarted) {
+                gameState.metroStarted = true;
+                showMessage("Starting train...", 1500);
+                setTimeout(() => {
+                    gameState.scene = 'train';
+                    showMessage("Train moving to next city...", 2000);
+                    setTimeout(() => {
+                        triggerJumpscare();
+                    }, 3000);
+                }, 2000);
+            }
+        }
+
+        // Jumpscare with 3D
+        function triggerJumpscare() {
+            gameState.scene = 'jumpscare';
+            jumpscareOverlay.style.display = 'block';
+            init3DJumpscare();
+            
+            setTimeout(() => {
+                gameState.jumpscareCount++;
+                jumpscareOverlay.style.display = 'none';
+                cleanup3DJumpscare();
+                
+                if (gameState.jumpscareCount >= 2) {
+                    gameState.scene = 'ending';
+                    showEnding();
+                } else {
+                    gameState.scene = 'train';
+                    showMessage("Keep going...", 1500);
+                    setTimeout(() => {
+                        triggerJumpscare();
+                    }, 4000);
+                }
+            }, 2000);
+        }
+
+        // 3D Jumpscare Scene
+        let scene3D, camera3D, renderer3D;
+        
+        function init3DJumpscare() {
+            const container = document.getElementById('jumpscare-3d');
+            container.innerHTML = '';
+            
+            scene3D = new THREE.Scene();
+            scene3D.background = new THREE.Color(0x000000);
+            
+            camera3D = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera3D.position.z = 5;
+            
+            renderer3D = new THREE.WebGLRenderer({ antialias: true });
+            renderer3D.setSize(window.innerWidth, window.innerHeight);
+            container.appendChild(renderer3D.domElement);
+            
+            // Scary face
+            const geometry = new THREE.SphereGeometry(2, 32, 32);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: 0x880000,
+                wireframe: true
+            });
+            const face = new THREE.Mesh(geometry, material);
+            scene3D.add(face);
+            
+            // Eyes
+            const eyeGeometry = new THREE.SphereGeometry(0.3, 16, 16);
+            const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            
+            const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            leftEye.position.set(-0.7, 0.5, 1.8);
+            scene3D.add(leftEye);
+            
+            const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            rightEye.position.set(0.7, 0.5, 1.8);
+            scene3D.add(rightEye);
+            
+            // Red glow light
+            const light = new THREE.PointLight(0xff0000, 2, 10);
+            light.position.set(0, 0, 5);
+            scene3D.add(light);
+            
+            animate3D();
+        }
+
+        function animate3D() {
+            if (jumpscareOverlay.style.display === 'none') return;
+            
+            requestAnimationFrame(animate3D);
+            scene3D.rotation.y += 0.02;
+            scene3D.rotation.x += 0.01;
+            renderer3D.render(scene3D, camera3D);
+        }
+
+        function cleanup3DJumpscare() {
+            if (renderer3D) {
+                renderer3D.dispose();
+            }
+        }
+
+        // Show Ending
+        function showEnding() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = '36px Courier New';
+            ctx.textAlign = 'center';
+            ctx.fillText('YOU ARE DEAD', canvas.width / 2, canvas.height / 2 - 50);
+            
+            ctx.font = '24px Courier New';
+            ctx.fillText('You were playing as the spirit of the man', canvas.width / 2, canvas.height / 2 + 20);
+            ctx.fillText('The real you died in the cabin...', canvas.width / 2, canvas.height / 2 + 60);
+            ctx.fillText('THE END', canvas.width / 2, canvas.height / 2 + 120);
+            
+            gameState.gameOver = true;
+        }
+
+        // Draw Cabin Scene
+        function drawCabin() {
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Walls
+            ctx.fillStyle = '#2d1b0e';
+            ctx.fillRect(100, 100, 600, 400);
+            
+            // Door
+            ctx.fillStyle = '#1a0f0a';
+            ctx.fillRect(350, 300, 100, 150);
+            
+            // Lightning effect
+            if (Math.random() < 0.02) {
+                ctx.fillStyle = '#fff';
+                ctx.globalAlpha = 0.3;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.globalAlpha = 1;
+            }
+            
+            // Rain
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 100; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x - 2, y + 10);
+                ctx.stroke();
+            }
+            
+            // Player
+            ctx.fillStyle = '#4a90d9';
+            ctx.beginPath();
+            ctx.arc(gameState.player.x, gameState.player.y, gameState.player.size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Exit door hint
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px Courier New';
+            ctx.textAlign = 'center';
+            ctx.fillText('Press SPACE to exit cabin', 400, 280);
+        }
+
+        // Draw Path Scene
+        function drawPath() {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Path
+            ctx.fillStyle = '#2a2a2a';
+            ctx.fillRect(300, 200, 200, 600);
+            
+            // Trees
+            ctx.fillStyle = '#0d1a0d';
+            for (let i = 0; i < 10; i++) {
+                ctx.fillRect(50 + i * 80, 100 + i * 50, 40, 100);
+            }
+            
+            // Rain
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 100; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x - 2, y + 10);
+                ctx.stroke();
+            }
+            
+            // Player
+            ctx.fillStyle = '#4a90d9';
+            ctx.beginPath();
+            ctx.arc(gameState.player.x, gameState.player.y, gameState.player.size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Gun item
+            if (!items.gun.collected) {
+                ctx.fillStyle = '#888';
+                ctx.fillRect(items.gun.x - 15, items.gun.y - 10, 30, 20);
+                ctx.fillStyle = '#fff';
+                ctx.font = '14px Courier New';
+                ctx.fillText('Gun', items.gun.x, items.gun.y - 15);
+            }
+            
+            // Helmet item
+            if (!items.helmet.collected) {
+                ctx.fillStyle = '#666';
+                ctx.beginPath();
+                ctx.arc(items.helmet.x, items.helmet.y, 15, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = '14px Courier New';
+                ctx.fillText('Helmet', items.helmet.x, items.helmet.y - 20);
+            }
+            
+            // City in distance
+            ctx.fillStyle = '#333';
+            ctx.fillRect(800, 100, 200, 150);
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px Courier New';
+            ctx.fillText('City →', 900, 90);
+        }
+
+        // Draw City Scene
+        function drawCity() {
+            ctx.fillStyle = '#050505';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Buildings
+            ctx.fillStyle = '#1a1a1a';
+            for (let i = 0; i < 8; i++) {
+                ctx.fillRect(i * 150, 100 + i * 20, 120, 300 - i * 20);
+            }
+            
+            // Empty streets
+            ctx.fillStyle = '#151515';
+            ctx.fillRect(200, 400, 600, 200);
+            
+            // Rain
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 100; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x - 2, y + 10);
+                ctx.stroke();
+            }
+            
+            // Player
+            ctx.fillStyle = '#4a90d9';
+            ctx.beginPath();
+            ctx.arc(gameState.player.x, gameState.player.y, gameState.player.size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Metro station
+            ctx.fillStyle = '#333';
+            ctx.fillRect(700, 200, 150, 200);
+            ctx.fillStyle = '#ff0000';
+            ctx.font = '20px Courier New';
+            ctx.fillText('METRO', 750, 190);
+            ctx.fillStyle = '#fff';
+            ctx.font = '14px Courier New';
+            ctx.fillText('Press SPACE', 725, 420);
+        }
+
+        // Draw Metro Scene
+        function drawMetro() {
+            ctx.fillStyle = '#080808';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Metro station interior
+            ctx.fillStyle = '#1f1f1f';
+            ctx.fillRect(0, 0, canvas.width, 400);
+            
+            // Train
+            ctx.fillStyle = '#444';
+            ctx.fillRect(200, 300, 400, 150);
+            
+            // Train windows
+            ctx.fillStyle = '#ffff88';
+            for (let i = 0; i < 5; i++) {
+                ctx.fillRect(250 + i * 70, 320, 50, 30);
+            }
+            
+            // Player
+            ctx.fillStyle = '#4a90d9';
+            ctx.beginPath();
+            ctx.arc(gameState.player.x, gameState.player.y, gameState.player.size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = '18px Courier New';
+            ctx.textAlign = 'center';
+            ctx.fillText('START TRAIN', canvas.width / 2, 200);
+            ctx.font = '14px Courier New';
+            ctx.fillText('Press SPACE to start', canvas.width / 2, 550);
+        }
+
+        // Draw Train Scene
+        function drawTrain() {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Train interior
+            ctx.fillStyle = '#2a2a2a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Seats
+            ctx.fillStyle = '#3a3a3a';
+            for (let i = 0; i < 6; i++) {
+                ctx.fillRect(100 + i * 120, 200, 80, 100);
+            }
+            
+            // Player
+            ctx.fillStyle = '#4a90d9';
+            ctx.beginPath();
+            ctx.arc(gameState.player.x, gameState.player.y, gameState.player.size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Moving effect
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 20; i++) {
+                const x = Math.random() * canvas.width;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+        }
+
+        // Update Player Position
+        function updatePlayer() {
+            if (gameState.keys['w'] || gameState.keys['arrowup']) {
+                gameState.player.y -= gameState.player.speed;
+            }
+            if (gameState.keys['s'] || gameState.keys['arrowdown']) {
+                gameState.player.y += gameState.player.speed;
+            }
+            if (gameState.keys['a'] || gameState.keys['arrowleft']) {
+                gameState.player.x -= gameState.player.speed;
+            }
+            if (gameState.keys['d'] || gameState.keys['arrowright']) {
+                gameState.player.x += gameState.player.speed;
+            }
+            
+            // Boundaries
+            gameState.player.x = Math.max(20, Math.min(canvas.width - 20, gameState.player.x));
+            gameState.player.y = Math.max(20, Math.min(canvas.height - 20, gameState.player.y));
+        }
+
+        // Check Item Collection
+        function checkItems() {
+            if (gameState.scene === 'path') {
+                const gunDist = Math.hypot(gameState.player.x - items.gun.x, gameState.player.y - items.gun.y);
+                if (gunDist < 30 && !items.gun.collected) {
+                    items.gun.collected = true;
+                    addToInventory('Gun');
+                    gameState.itemsCollected.gun = true;
+                }
+                
+                const helmetDist = Math.hypot(gameState.player.x - items.helmet.x, gameState.player.y - items.helmet.y);
+                if (helmetDist < 30 && !items.helmet.collected) {
+                    items.helmet.collected = true;
+                    addToInventory('Helmet');
+                    gameState.itemsCollected.helmet = true;
+                }
+            }
+        }
+
+        // Check Scene Transitions
+        function checkTransitions() {
+            if (gameState.scene === 'cabin' && gameState.keys[' ']) {
+                gameState.scene = 'path';
+                gameState.player.x = 350;
+                gameState.player.y = 500;
+                showMessage("You exited the cabin...");
+            }
+            
+            if (gameState.scene === 'path' && gameState.player.x > 700) {
+                gameState.scene = 'city';
+                gameState.player.x = 200;
+                showMessage("You reached the abandoned city...");
+            }
+            
+            if (gameState.scene === 'city' && gameState.player.x > 700 && gameState.player.y > 350) {
+                gameState.scene = 'metro';
+                gameState.player.x = 400;
+                gameState.player.y = 350;
+                showMessage("Metro station...");
+            }
+        }
+
+        // Game Loop
+        function gameLoop() {
+            if (gameState.gameOver) return;
+            
+            updatePlayer();
+            checkItems();
+            checkTransitions();
+            
+            // Draw current scene
+            switch(gameState.scene) {
+                case 'cabin':
+                    drawCabin();
+                    break;
+                case 'path':
+                    drawPath();
+                    break;
+                case 'city':
+                    drawCity();
+                    break;
+                case
