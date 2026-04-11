@@ -1,39 +1,163 @@
-<!DOCTYPE HTML>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spirit Escape - Horror Game</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <title>Forest Escape: The Stalker</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        body { margin: 0; background-color: #111; display: flex; justify-content: center; align-items: center; height: 100vh; color: white; font-family: sans-serif; }
+        canvas { border: 2px solid #444; background: #2d3436; /* Dark Forest Green-Gray */ }
+        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+<div id="ui">Status: <span id="status">Survive the Forest</span></div>
+<canvas id="gameCanvas" width="800" height="400"></canvas>
+
+<script>
+// --- SETUP ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const statusDisplay = document.getElementById('status');
+
+// --- GAME STATE ---
+let keys = {};
+let gameOver = false;
+let globalLighting = 0.9; // 0.9 = very dark, 0.0 = full lightning flash
+
+// --- PLAYER OBJECT (Customized Colors) ---
+const player = {
+    x: 50,
+    y: 300,
+    width: 20,
+    height: 40,
+    speed: 4,
+    colorHead: '#333',   // Black cap
+    colorTorso: '#2ecc71', // Green shirt
+    colorLegs: '#e67e22'   // Brown pants
+};
+
+// --- KILLER / STALKER OBJECT ---
+const killer = {
+    x: 0,
+    y: 0,
+    radius: 70, // Range of the flashlight beam
+    isVisible: false,
+    timer: 150, // Frames until next flash
+    flashDuration: 30, // How long the light stays on
+    color: '#e74c3c', // Red (killer's body, only visible if flashed)
+    lightColor: 'rgba(255, 255, 200, 0.5)' // Yellowish flashlight beam
+};
+
+// --- INPUT HANDLING ---
+window.addEventListener('keydown', e => keys[e.key] = true);
+window.addEventListener('keyup', e => keys[e.key] = false);
+
+// --- MAIN GAME LOOP ---
+function gameLoop() {
+    update();
+    draw();
+    if (!gameOver) {
+        requestAnimationFrame(gameLoop);
+    }
+}
+
+// --- UPDATE LOGIC ---
+function update() {
+    if (gameOver) return;
+
+    // 1. Player Movement
+    if (keys['ArrowLeft'] && player.x > 0) player.x -= player.speed;
+    if (keys['ArrowRight'] && player.x < canvas.width - player.width) player.x += player.speed;
+
+    // 2. Environment (Random Lightning)
+    if (Math.random() < 0.005) { // Rare lightning flash
+        globalLighting = 0.1; // Make the whole scene bright
+    } else {
+        globalLighting = Math.min(0.9, globalLighting + 0.05); // Fade back to darkness
+    }
+
+    // 3. Killer Logic (The Flashlight)
+    killer.timer--;
+
+    if (killer.timer <= 0 && !killer.isVisible) {
+        // TRIGGER FLASH: Position the killer randomly near the player's path
+        killer.isVisible = true;
+        killer.timer = killer.flashDuration; // Repurpose timer for duration
+        killer.x = player.x + (Math.random() * 200 - 100); // Randomly left/right of player
+        killer.y = player.y - 10; // Slightly above player foot level
         
-        body {
-            background: #000;
-            overflow: hidden;
-            font-family: 'Courier New', monospace;
+        console.log("FLASH! The Killer is here.");
+    }
+
+    if (killer.isVisible) {
+        // KILLER IS FLASHING
+        if (killer.timer <= 0) {
+            // Flash Ends
+            killer.isVisible = false;
+            killer.timer = 200 + Math.random() * 300; // Reset random countdown (3-8 seconds)
         }
-        
-        #game-container {
-            position: relative;
-            width: 100vw;
-            height: 100vh;
+
+        // DETECT PLAYER (Simple Collision with Light Circle)
+        // Check if player center is within killer.radius
+        let plrCenterX = player.x + player.width/2;
+        let plrCenterY = player.y + player.height/2;
+        let dist = Math.sqrt(Math.pow(plrCenterX - killer.x, 2) + Math.pow(plrCenterY - killer.y, 2));
+
+        if (dist < killer.radius) {
+            // PLAYER DETECTED
+            gameOver = true;
+            statusDisplay.innerText = "GAME OVER: DETECTED BY THE FLASH";
+            statusDisplay.style.color = "red";
         }
+    }
+}
+
+// --- DRAWING LOGIC ---
+function draw() {
+    // Clear Canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 1. Draw Player (3 parts for custom colors)
+    // Head (Cap)
+    ctx.fillStyle = player.colorHead;
+    ctx.fillRect(player.x, player.y, player.width, player.height * 0.25);
+    // Torso (Shirt)
+    ctx.fillStyle = player.colorTorso;
+    ctx.fillRect(player.x, player.y + (player.height * 0.25), player.width, player.height * 0.40);
+    // Legs (Pants)
+    ctx.fillStyle = player.colorLegs;
+    ctx.fillRect(player.x, player.y + (player.height * 0.65), player.width, player.height * 0.35);
+
+    // 2. Draw Killer (Only if visible during a flash)
+    if (killer.isVisible) {
+        // Draw the Flashlight Beam (a gradient circle)
+        let gradient = ctx.createRadialGradient(killer.x, killer.y, 0, killer.x, killer.y, killer.radius);
+        gradient.addColorStop(0, killer.lightColor);
+        gradient.addColorStop(1, 'rgba(255, 255, 200, 0)'); // Fades to invisible
         
-        #game-canvas {
-            display: block;
-            width: 100%;
-            height: 100%;
-        }
-        
-        #ui {
-            position: absolute;
-            top: 10px;
-            left: 10px;
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(killer.x, killer.y, killer.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw the Killer's silhouette (very subtle, inside the light)
+        ctx.fillStyle = killer.color;
+        ctx.fillRect(killer.x - 5, killer.y - 20, 10, 30);
+    }
+
+    // 3. APPLY GLOBAL DARKNESS (Darkness Overlay)
+    // This goes LAST so it covers everything and ambient lightning flashes
+    ctx.fillStyle = `rgba(0, 0, 5, ${globalLighting})`; // Very dark blue/black
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+// --- START ---
+gameLoop();
+
+</script>
+</body>
+</html>
             color: #fff;
             font-size: 16px;
             text-shadow: 2px 2px 4px #000;
